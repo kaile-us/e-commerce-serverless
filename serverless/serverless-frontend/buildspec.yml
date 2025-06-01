@@ -1,0 +1,21 @@
+version: 0.2
+
+phases:
+  install:
+    commands:
+      # Install pnpm
+      - npm install -g pnpm
+      # Install dependencies
+      - pnpm install
+
+  build:
+    commands:
+      # Run the build command using pnpm
+      - pnpm run build
+      # Invalidate CloudFront cache after building
+      - aws cloudfront create-invalidation --distribution-id E1J0UER6Y04W2A --paths "/*"
+
+artifacts:
+  files:
+    - '**/*'
+  base-directory: out
