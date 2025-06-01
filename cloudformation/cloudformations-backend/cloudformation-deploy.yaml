@@ -1,0 +1,100 @@
+AWSTemplateFormatVersion: "2010-09-09"
+
+Resources:
+    # DynamoDB Table for Products
+    ProductsTable:
+        Type: "AWS::DynamoDB::Table"
+        Properties:
+            TableName: Products
+            AttributeDefinitions:
+                - AttributeName: id
+                  AttributeType: S
+            KeySchema:
+                - AttributeName: id
+                  KeyType: HASH
+            ProvisionedThroughput:
+                ReadCapacityUnits: 5
+                WriteCapacityUnits: 5
+
+    # DynamoDB Table for Users
+    UsersTable:
+        Type: "AWS::DynamoDB::Table"
+        Properties:
+            TableName: Carts
+            AttributeDefinitions:
+                - AttributeName: id
+                  AttributeType: S
+            KeySchema:
+                - AttributeName: id
+                  KeyType: HASH
+            ProvisionedThroughput:
+                ReadCapacityUnits: 5
+                WriteCapacityUnits: 5
+
+    # DynamoDB Table for Orders
+    OrdersTable:
+        Type: "AWS::DynamoDB::Table"
+        Properties:
+            TableName: Orders
+            AttributeDefinitions:
+                - AttributeName: id
+                  AttributeType: S
+            KeySchema:
+                - AttributeName: id
+                  KeyType: HASH
+            ProvisionedThroughput:
+                ReadCapacityUnits: 5
+                WriteCapacityUnits: 5
+
+    # Lambda Function for Browsing Products
+    BrowseProductsLambda:
+        Type: "AWS::Lambda::Function"
+        Properties:
+            Handler: src/functions/products/getProducts.handler
+            Role: arn:aws:iam::124931565609:role/EcommerceLambdaExecutionRole
+            FunctionName: getProducts
+            Code:
+                S3Bucket: e-commerce-final-project-api
+                S3Key: serverless-backend.zip
+            Runtime: nodejs14.x
+
+    # Lambda Function for Placing Order
+    PlaceOrderLambda:
+        Type: "AWS::Lambda::Function"
+        Properties:
+            Handler: src/functions/orders/createOrder.handler
+            Role: arn:aws:iam::124931565609:role/EcommerceLambdaExecutionRole
+            FunctionName: PlaceOrder
+            Code:
+                S3Bucket: e-commerce-final-project-api
+                S3Key: serverless-backend.zip
+            Runtime: nodejs14.x
+
+    # API Gateway for the backend
+    ApiGateway:
+        Type: "AWS::ApiGateway::RestApi"
+        Properties:
+            Name: ECommerceAPI
+            Description: API for e-commerce system
+            FailOnWarnings: "true"
+
+    # API Resources for Products, Cart, and Orders
+    GetProductsApi:
+        Type: "AWS::ApiGateway::Resource"
+        Properties:
+            RestApiId: !Ref ApiGateway
+            ParentId: !GetAtt ApiGateway.RootResourceId
+            PathPart: products
+
+    PlaceOrderApi:
+        Type: "AWS::ApiGateway::Resource"
+        Properties:
+            RestApiId: !Ref ApiGateway
+            ParentId: !GetAtt ApiGateway.RootResourceId
+            PathPart: orders
+
+Outputs:
+    GetProductsApiUrl:
+        Value: !Sub "https://${ApiGateway}.execute-api.${AWS::Region}.amazonaws.com/products"
+    PlaceOrderApiUrl:
+        Value: !Sub "https://${ApiGateway}.execute-api.${AWS::Region}.amazonaws.com/order"

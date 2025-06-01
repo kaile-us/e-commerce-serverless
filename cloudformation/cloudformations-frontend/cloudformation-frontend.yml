@@ -1,0 +1,195 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: CloudFormation template to create S3, CloudFront, and CI/CD Pipeline
+
+Resources:
+
+  # S3 Bucket
+  S3Bucket:
+    Type: 'AWS::S3::Bucket'
+    Properties:
+      BucketName: 'serverless-frontend-bucket-cloudformation'
+      AccessControl: Private
+      OwnershipControls:
+        Rules:
+          - ObjectOwnership: BucketOwnerEnforced
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: false
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+
+  # CloudFront Origin Access Control
+  CloudFrontOriginAccessControl:
+    Type: 'AWS::CloudFront::OriginAccessControl'
+    Properties:
+      OriginAccessControlConfig:
+        Name: !Sub ${AWS::StackName}-OAC
+        Description: 'Origin Access Control for S3'
+        SigningProtocol: sigv4
+        SigningBehavior: always
+        OriginAccessControlOriginType: s3
+
+  # CloudFront Distribution
+  CloudFrontDistribution:
+    Type: 'AWS::CloudFront::Distribution'
+    Properties:
+      DistributionConfig:
+        Origins:
+          - DomainName: !GetAtt S3Bucket.DomainName
+            Id: S3Origin
+            S3OriginConfig:
+              OriginAccessIdentity: ''
+            OriginAccessControlId: !GetAtt CloudFrontOriginAccessControl.Id
+        Enabled: 'true'
+        DefaultCacheBehavior:
+          TargetOriginId: S3Origin
+          ViewerProtocolPolicy: 'redirect-to-https'
+          AllowedMethods:
+            - 'GET'
+            - 'HEAD'
+          CachedMethods:
+            - 'GET'
+            - 'HEAD'
+          ForwardedValues:
+            QueryString: false
+            Cookies:
+              Forward: none
+        DefaultRootObject: 'index.html'
+        PriceClass: 'PriceClass_100'
+
+  # S3 Bucket Policy to allow CloudFront access
+  S3BucketPolicy:
+    Type: 'AWS::S3::BucketPolicy'
+    Properties:
+      Bucket: !Ref S3Bucket
+      PolicyDocument:
+        Version: '2012-10-17'
+        Id: 'PolicyForCloudFrontPrivateContent'
+        Statement:
+          - Sid: 'AllowCloudFrontServicePrincipal'
+            Effect: 'Allow'
+            Principal:
+              Service: 'cloudfront.amazonaws.com'
+            Action: 's3:GetObject'
+            Resource: !Sub 'arn:aws:s3:::${S3Bucket}/*'
+            Condition:
+              StringEquals:
+                'AWS:SourceArn': !Sub 'arn:aws:cloudfront::${AWS::AccountId}:distribution/${CloudFrontDistribution}'
+
+  # CodeBuild Project
+  CodeBuildProject:
+    Type: AWS::CodeBuild::Project
+    Properties:
+      Name: serverless-frontend-code-build-cloud-formation
+      ServiceRole: !Sub arn:aws:iam::${AWS::AccountId}:role/service-role/codebuild-serverless-frontend-code-build-service-role
+      Artifacts:
+        Type: CODEPIPELINE
+      Environment:
+        Type: LINUX_CONTAINER
+        ComputeType: BUILD_GENERAL1_SMALL
+        Image: aws/codebuild/amazonlinux2-x86_64-standard:5.0
+        EnvironmentVariables:
+          - Name: NEXT_PUBLIC_API_URL
+            Value: ${NEXT_PUBLIC_API_URL}
+          - Name: NEXT_PUBLIC_AWS_REGION
+            Value: ${NEXT_PUBLIC_AWS_REGION}
+          - Name: NEXT_PUBLIC_USER_POOL_ID
+            Value: ${NEXT_PUBLIC_USER_POOL_ID}
+          - Name: NEXT_PUBLIC_USER_POOL_CLIENT_ID
+            Value: ${NEXT_PUBLIC_USER_POOL_CLIENT_ID}
+          - Name: NEXT_PUBLIC_COGNITO_DOMAIN
+            Value: ${NEXT_PUBLIC_COGNITO_DOMAIN}
+          - Name: NEXT_PUBLIC_REDIRECT_SIGN_IN
+            Value: ${NEXT_PUBLIC_REDIRECT_SIGN_IN}
+          - Name: NEXT_PUBLIC_REDIRECT_SIGN_OUT
+            Value: ${NEXT_PUBLIC_REDIRECT_SIGN_OUT}
+          - Name: NEXT_PUBLIC_REDIRECT_URL
+            Value: ${NEXT_PUBLIC_REDIRECT_URL}
+          - Name: NEXT_PUBLIC_COGNITO_AUTHORITY
+            Value: ${NEXT_PUBLIC_COGNITO_AUTHORITY}
+          - Name: NEXT_PUBLIC_CLIENT_ID
+            Value: ${NEXT_PUBLIC_CLIENT_ID}
+          - Name: NEXT_PUBLIC_SCOPES
+            Value: ${NEXT_PUBLIC_SCOPES}
+          - Name: NEXT_PUBLIC_IMAGE_URL_PREFIX
+            Value: ${NEXT_PUBLIC_IMAGE_URL_PREFIX}
+      Source:
+        Type: CODEPIPELINE
+        BuildSpec: buildspec.yml
+
+  # CodePipeline
+  Pipeline:
+    Type: AWS::CodePipeline::Pipeline
+    Properties:
+      Name: serverless-frontend-pipeline-cloud-formation
+      RoleArn: !Sub arn:aws:iam::${AWS::AccountId}:role/service-role/AWSCodePipelineServiceRole-us-east-1-serverless-frontend-pipeli
+      ArtifactStore:
+        Type: S3
+        Location: !Ref S3Bucket
+      Stages:
+        - Name: Source
+          Actions:
+            - Name: Source
+              ActionTypeId:
+                Category: Source
+                Owner: AWS
+                Version: '1'
+                Provider: CodeStarSourceConnection
+              Configuration:
+                ConnectionArn: ${GITHUB_CONNECTION_ARN}
+                FullRepositoryId: ${GITHUB_REPOSITORY}
+                BranchName: ${GITHUB_BRANCH}
+                DetectChanges: true
+                OutputArtifactFormat: "CODE_ZIP"
+              OutputArtifacts:
+                - Name: SourceArtifact
+              Namespace: SourceVariables
+              RunOrder: 1
+
+        - Name: Build
+          Actions:
+            - Name: Build
+              ActionTypeId:
+                Category: Build
+                Owner: AWS
+                Version: '1'
+                Provider: CodeBuild
+              Configuration:
+                ProjectName: !Ref CodeBuildProject
+              InputArtifacts:
+                - Name: SourceArtifact
+              OutputArtifacts:
+                - Name: BuildArtifact
+              RunOrder: 1
+
+        - Name: Deploy
+          Actions:
+            - Name: Deploy
+              ActionTypeId:
+                Category: Deploy
+                Owner: AWS
+                Version: '1'
+                Provider: S3
+              Configuration:
+                BucketName: !Ref S3Bucket
+                Extract: true
+              InputArtifacts:
+                - Name: BuildArtifact
+              RunOrder: 1
+
+Outputs:
+  S3BucketName:
+    Description: 'The name of the S3 bucket'
+    Value: !Ref S3Bucket
+
+  CloudFrontDistributionId:
+    Description: 'The CloudFront Distribution ID'
+    Value: !Ref CloudFrontDistribution
+
+  CloudFrontDomain:
+    Description: 'The CloudFront Distribution Domain Name'
+    Value: !GetAtt CloudFrontDistribution.DomainName
+
+  PipelineId:
+    Description: 'The Pipeline ID'
+    Value: !Ref Pipeline
